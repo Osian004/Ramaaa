@@ -312,7 +312,7 @@ async def account_login(bot: Client, m: Message):
                         time.sleep(e.x)
                         continue
                 else:
-                    Show = f"**⥥ Downloading »**\n\n**Name:-** `{name}\n\nQuality:- {raw_text2}`\n\n"
+                    Show = f"**⥥ Downloading »**\n\n**Name:-** `{name}\n\nQuality:- {raw_text2}`\n\n**With ❤️ From Admins.**"
                     prog = await m.reply_text(Show)
                     res_file = await helper.download_video(url, cmd, name)
                     filename = res_file
@@ -323,7 +323,7 @@ async def account_login(bot: Client, m: Message):
 
             except Exception as e:
                 await m.reply_text(
-                    f"**Downloading Interrupted **\n\n{str(e)}\n**Name:-**  {name}\n\n**Link:-** Null"
+                    f"**Downloading Interrupted **\n\n{str(e)}\n**Name:-**  {name}\n\n**Link:-** \n\n `{url}`"
                 )
                 continue
 
