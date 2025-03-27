@@ -330,4 +330,223 @@ async def account_login(bot: Client, m: Message):
     except Exception as e:
         await m.reply_text(e)
     await m.reply_text("Done ✅")
+
+
+
+
+
+
+@bot.on_message(filters.command(["ziptxt"]) & filters.chat(sudo_groups))
+async def ziptxt_handler(bot: Client, m: Message):
+    try:
+        editable = await m.reply_text("Send links listed in a txt file in format **Name:link**")
+        input_msg = await bot.listen(editable.chat.id, timeout=300)
+        x = await input_msg.download()
+        await input_msg.delete(True)
+
+        # Create downloads directory if not exists
+        os.makedirs(f"./downloads/{m.chat.id}", exist_ok=True)
+        
+        file_name, ext = os.path.splitext(os.path.basename(x))
+        credit = f"Downloaded by [{m.from_user.first_name}](tg://user?id={m.from_user.id})" if m.from_user else "Downloaded anonymously"
+        
+        try:
+            with open(x, "r") as f:
+                content = f.read().splitlines()
+            links = [i.split("://", 1) for i in content if i.strip()]
+            os.remove(x)
+        except Exception as e:
+            await m.reply_text(f"Error reading file: {str(e)}")
+            if os.path.exists(x):
+                os.remove(x)
+            return
+
+        if not links:
+            await m.reply_text("No valid links found in the file.")
+            return
+
+        # Get user inputs
+        inputs = await get_user_inputs(bot_links=len(links), editable=editable, file_name=file_name)
+        if not inputs:
+            return
+
+        b_name, start_from, res, creditx, thumb = inputs
+
+        # Process thumb
+        thumb_path = await process_thumbnail(thumb)
+        
+        # Start processing
+        message = await bot.send_message(sudo_groups, f"❇️ {b_name}")
+        await message.pin()
+
+        count = start_from
+        for i in range(start_from - 1, len(links)):
+            try:
+                url = await process_url(links[i][1])
+                name = await generate_filename(links[i][0], count)
+                
+                if url.endswith(".pdf"):
+                    await handle_pdf(bot, m, url, name, b_name, creditx)
+                elif url.endswith(".zip"):
+                    await handle_zip(bot, m, url, name, b_name, creditx)
+                else:
+                    await handle_video(bot, m, url, name, b_name, res, creditx, thumb_path)
+                
+                count += 1
+                time.sleep(5)  # Basic rate limiting
+            except FloodWait as e:
+                await m.reply_text(f"Flood wait: Sleeping for {e.x} seconds")
+                time.sleep(e.x)
+                continue
+            except Exception as e:
+                await m.reply_text(f"Error processing {links[i][0]}: {str(e)}")
+                continue
+
+        await m.reply_text("Done ✅")
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
+
+    except Exception as e:
+        await m.reply_text(f"Main Error: {str(e)}")
+
+async def get_user_inputs(tot_links, editable, file_name):
+    try:
+        await editable.edit(f"Total links found: {tot_links}\nSend starting index (default 1):")
+        input0 = await bot.listen(editable.chat.id, timeout=120)
+        start_from = int(input0.text) if input0.text.isdigit() else 1
+        await input0.delete(True)
+
+        await editable.edit("Enter Batch Name or send 'df' to use filename:")
+        input1 = await bot.listen(editable.chat.id, timeout=120)
+        b_name = file_name if input1.text.lower() == 'df' else input1.text
+        await input1.delete(True)
+        
+        await editable.edit("Enter resolution (144,240,360,480,720,1080):")
+        input2 = await bot.listen(editable.chat.id, timeout=120)
+        res = {
+            "144": "256x144", "240": "426x240", "360": "640x360",
+            "480": "854x480", "720": "1280x720", "1080": "1920x1080"
+        }.get(input2.text, "UN")
+        await input2.delete(True)
+
+        await editable.edit("Enter caption or 'df' for default or '/skip' for none:")
+        input3 = await bot.listen(editable.chat.id, timeout=120)
+        creditx = {
+            'df': credit, '/skip': ''
+        }.get(input3.text, input3.text)
+        await input3.delete(True)
+       
+        await editable.edit("Send thumb URL or 'no' to skip:")
+        input6 = await bot.listen(editable.chat.id, timeout=120)
+        thumb = input6.text
+        await input6.delete(True)
+        await editable.delete()
+
+        return b_name, start_from, res, creditx, thumb
+
+    except Exception as e:
+        await editable.edit(f"Input error: {str(e)}")
+        return None
+
+async def process_url(url_part):
+    url = "https://" + url_part.replace("file/d/", "uc?export=download&id=")\
+                              .replace("www.youtube-nocookie.com/embed", "youtu.be")\
+                              .replace("?modestbranding=1", "")\
+                              .replace("/view?usp=sharing", "")
+    
+    if "visionias" in url:
+        async with ClientSession() as session:
+            async with session.get(url, headers={'User-Agent': 'Mozilla/5.0'}) as resp:
+                text = await resp.text()
+                url = re.search(r"(https://.*?playlist.m3u8.*?)\"", text).group(1)
+    elif 'videos.classplusapp' in url:
+        url = requests.get(f'https://api.classplusapp.com/cams/uploader/video/jw-signed-url?url={url}',
+                          headers={'x-access-token': 'your-access-token'}).json()['url']
+    elif '/master.mpd' in url:
+        id = url.split("/")[-2]
+        url = "https://d26g5bnklkwsh4.cloudfront.net/" + id + "/master.m3u8"
+    
+    return url
+
+async def generate_filename(name_part, count):
+    name1 = re.sub(r'[^\w\s-]', '', name_part).strip()
+    return f'{str(count).zfill(3)}) {name1[:60]}'
+
+async def process_thumbnail(thumb_url):
+    if thumb_url.lower() in ['no', '']:
+        return None
+    
+    try:
+        thumb_path = "thumb.jpg"
+        if thumb_url.startswith(("http://", "https://")):
+            getstatusoutput(f"wget '{thumb_url}' -O '{thumb_path}'")
+            return thumb_path if os.path.exists(thumb_path) else None
+    except:
+        return None
+
+async def handle_pdf(bot, m, url, name, b_name, caption):
+    try:
+        cmd = f'aria2c -x16 -k1M -o "{name}.pdf" "{url}"'
+        os.system(cmd)
+        
+        if os.path.exists(f"{name}.pdf"):
+            await bot.send_document(
+                chat_id=m.chat.id,
+                document=f"{name}.pdf",
+                caption=f"* {name}.pdf\n*Batch »* {b_name}\n\n{caption}"
+            )
+            os.remove(f"{name}.pdf")
+    except Exception as e:
+        raise Exception(f"PDF Error: {str(e)}")
+
+async def handle_zip(bot, m, url, name, b_name, caption):
+    try:
+        if "youtu" in url:
+            # Handle YouTube links that might have 'zip' in URL but are actually videos
+            ytf = "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+            cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
+            os.system(cmd)
+            
+            if os.path.exists(f"{name}.mp4"):
+                await bot.send_video(
+                    chat_id=m.chat.id,
+                    video=f"{name}.mp4",
+                    caption=f"* {name}.mp4\n*Batch »* {b_name}\n\n{caption}"
+                )
+                os.remove(f"{name}.mp4")
+        else:
+            # Handle actual ZIP files
+            cmd = f'aria2c -x16 -k1M -o "{name}.zip" "{url}"'
+            os.system(cmd)
+            
+            if os.path.exists(f"{name}.zip"):
+                await bot.send_document(
+                    chat_id=m.chat.id,
+                    document=f"{name}.zip",
+                    caption=f"* {name}.zip\n*Batch »* {b_name}\n\n{caption}"
+                )
+                os.remove(f"{name}.zip")
+    except Exception as e:
+        raise Exception(f"ZIP Error: {str(e)}")
+
+async def handle_video(bot, m, url, name, b_name, res, caption, thumb_path):
+    try:
+        if "youtu" in url:
+            ytf = f"bv*[height<={res.split('x')[1]}][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+        else:
+            ytf = f"bv*[height<={res.split('x')[1]}]+ba/b/bv+ba"
+        
+        cmd = f'yt-dlp -f "{ytf}" "{url}" -o "{name}.mp4"'
+        os.system(cmd)
+        
+        if os.path.exists(f"{name}.mp4"):
+            await bot.send_video(
+                chat_id=m.chat.id,
+                video=f"{name}.mp4",
+                caption=f"* {name} {res}.mp4\n*Batch »* {b_name}\n\n{caption}",
+                thumb=thumb_path if thumb_path else None
+            )
+            os.remove(f"{name}.mp4")
+    except Exception as e:
+        raise Exception(f"Video Error: {str(e)}")
 bot.run()
