@@ -40,20 +40,6 @@ from pyrogram.types import InputMediaDocument
 
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    stream=sys.stdout
-)
-
-# Get config from environment variables (Koyeb)
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-SUDO_GROUPS = list(map(int, os.environ.get("SUDO_GROUPS", "").split()))
-
-
 botStartTime = time.time()
 batch = []
 bot = Client(
